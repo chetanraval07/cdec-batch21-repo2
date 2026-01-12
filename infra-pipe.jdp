@@ -12,7 +12,7 @@ pipeline {
         stage('PLAN') {
             steps {
                 sh '''
-                terraform init
+                terraform init -reconfigure
                 terraform plan
                 '''
             }
