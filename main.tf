@@ -1,35 +1,49 @@
+########################################
+# Provider
+########################################
 terraform {
-  required_version = ">= 1.3"
+  required_version = ">= 1.5.0"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "6.26.0"
+      version = "~> 6.0"
     }
   }
 
   backend "s3" {
-    bucket  = "jenkins-bucxx"
-    key     = "terraform.tfstate"
-    region  = "eu-west-1"
-    encrypt = true
+    bucket         = "my-terraform-backend-bucket"
+    key            = "eks/terraform.tfstate"
+    region         = "eu-west-1"
+    dynamodb_table = "terraform-locks"
+    encrypt        = true
   }
 }
 
-# 👇 provider MUST be OUTSIDE terraform block
 provider "aws" {
-  region = "eu-west-1"
+  region = var.region
 }
 
-#################################
-
-data "aws_vpc" "default" {
-  default = true
+########################################
+# Variables
+########################################
+variable "region" {
+  default = "eu-west-1"
 }
 
 variable "cluster_name" {
-  type    = string
   default = "my-cluster-19"
+}
+
+variable "node_group_name" {
+  default = "myb19-node-group"
+}
+
+########################################
+# Data Sources (Use existing VPC)
+########################################
+data "aws_vpc" "default" {
+  default = true
 }
 
 data "aws_subnets" "default" {
@@ -39,12 +53,11 @@ data "aws_subnets" "default" {
   }
 }
 
-#################################
-# IAM ROLE FOR EKS CLUSTER
-#################################
-
+########################################
+# IAM Role – EKS Cluster
+########################################
 resource "aws_iam_role" "eks_cluster_role" {
-  name = "eks-cluster-role"
+  name = "eks-cluster-role-${var.cluster_name}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -61,12 +74,11 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 }
 
-#################################
-# IAM ROLE FOR NODE GROUP
-#################################
-
+########################################
+# IAM Role – Worker Nodes
+########################################
 resource "aws_iam_role" "node_role" {
-  name = "eks-node-role"
+  name = "eks-node-role-${var.cluster_name}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -80,7 +92,8 @@ resource "aws_iam_role" "node_role" {
 
 resource "aws_iam_role_policy_attachment" "node_policies" {
   count = 3
-  role  = aws_iam_role.node_role.name
+
+  role = aws_iam_role.node_role.name
 
   policy_arn = element([
     "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
@@ -89,16 +102,17 @@ resource "aws_iam_role_policy_attachment" "node_policies" {
   ], count.index)
 }
 
-#################################
-# EKS CLUSTER
-#################################
-
+########################################
+# EKS Cluster
+########################################
 resource "aws_eks_cluster" "mycluster" {
   name     = var.cluster_name
   role_arn = aws_iam_role.eks_cluster_role.arn
 
   vpc_config {
-    subnet_ids = data.aws_subnets.default.ids
+    subnet_ids              = data.aws_subnets.default.ids
+    endpoint_public_access  = true
+    endpoint_private_access = false
   }
 
   depends_on = [
@@ -106,15 +120,14 @@ resource "aws_eks_cluster" "mycluster" {
   ]
 }
 
-#################################
-# NODE GROUP
-#################################
-
+########################################
+# EKS Node Group
+########################################
 resource "aws_eks_node_group" "nodegroup" {
   cluster_name    = aws_eks_cluster.mycluster.name
-  node_group_name = "myb19-node-group"
-  node_role_arn   = aws_iam_role.node_role.arn
-  subnet_ids      = data.aws_subnets.default.ids
+  node_group_name = var.node_group_name
+  node_role_arn  = aws_iam_role.node_role.arn
+  subnet_ids     = data.aws_subnets.default.ids
 
   instance_types = ["c7i-flex.large"]
 
@@ -125,14 +138,14 @@ resource "aws_eks_node_group" "nodegroup" {
   }
 
   depends_on = [
+    aws_eks_cluster.mycluster,
     aws_iam_role_policy_attachment.node_policies
   ]
 }
 
-#################################
-# OUTPUTS
-#################################
-
+########################################
+# Outputs
+########################################
 output "cluster_name" {
   value = aws_eks_cluster.mycluster.name
 }
