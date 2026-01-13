@@ -9,7 +9,7 @@ terraform {
   }
 
   backend "s3" {
-    bucket  = "diamond-head"
+    bucket  = "jenkins-bucxx"
     key     = "terraform.tfstate"
     region  = "eu-west-1"
     encrypt = true
